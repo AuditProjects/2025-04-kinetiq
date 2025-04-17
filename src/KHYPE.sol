@@ -84,6 +84,7 @@ contract KHYPE is ERC20PermitUpgradeable, AccessControlEnumerableUpgradeable {
      * @param to Address to receive the minted tokens
      * @param amount Amount of tokens to mint
      */
+     // 什么是通胀攻击？
     function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
         _mint(to, amount); // TODO update the logic with mirror token
     }

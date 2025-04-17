@@ -253,6 +253,40 @@ contract ValidatorManagerTest is BaseTest {
         assertFalse(validatorManager.hasPendingRebalance(validator1));
     }
 
+    // @poc-m1
+    function test_RebalanceWithdrawal_DoS() public {
+        vm.startPrank(manager);
+        validatorManager.activateValidator(validator1);
+        validatorManager.activateValidator(validator2);
+        vm.stopPrank();
+
+        vm.prank(address(oracleManager));
+        validatorManager.updateValidatorPerformance(validator1, 100 ether, 8000, 7500, 9000, 8500);
+
+        address[] memory validators = new address[](1);
+        validators[0] = validator1;
+        uint256[] memory amounts = new uint256[](1);
+        // if the stakingManager balance never reaches 200
+        amounts[0] = 200 ether;
+
+        // Setup StakingManager balance for redelegation
+        vm.deal(address(stakingManager), 100 ether);
+
+        vm.startPrank(manager);
+        // 1. rebalanceWithdrawal is executed successfully, and the validator enters the pending state
+        validatorManager.rebalanceWithdrawal(address(stakingManager), validators, amounts);
+
+        validatorManager.setDelegation(address(stakingManager), validator2);
+
+        // 2. closeRebalanceRequests can never be executed successfully
+        vm.expectRevert("Insufficient balance");
+        validatorManager.closeRebalanceRequests(address(stakingManager), validators);
+        vm.stopPrank();
+
+        assertTrue(validatorManager.hasPendingRebalance(validator1));
+    }
+
+
     // function test_EmergencyWithdrawal() public {
     //     // Setup validator
     //     vm.startPrank(manager);

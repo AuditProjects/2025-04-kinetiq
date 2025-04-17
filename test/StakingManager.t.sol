@@ -86,6 +86,81 @@ contract StakingManagerTest is BaseTest {
         assertEq(kHYPE.balanceOf(user), stakeAmount);
     }
 
+    function test_ResetL1OperationsQueue() public {
+        uint256 stakeAmount = 1 ether;
+        vm.startPrank(manager);
+        validatorManager.activateValidator(validator);
+        validatorManager.setDelegation(address(stakingManager), validator);
+        vm.stopPrank();
+
+        vm.deal(user, stakeAmount);
+        // Step 1: User stakes 1 ether worth of HYPE
+        vm.startPrank(user);
+        stakingManager.stake{value: stakeAmount}();
+
+        // Step 2: User queues a withdrawal
+        kHYPE.approve(address(stakingManager), stakeAmount);
+        stakingManager.queueWithdrawal(stakeAmount);
+        vm.stopPrank();
+        // Step 3: Manager calls resetL1OperationsQueue
+        vm.prank(manager);
+        stakingManager.resetL1OperationsQueue();
+        // Step 4:  User loses both HYPE and kHYPE(confirmWithdrawal can never succeed)
+        assertEq(kHYPE.balanceOf(user), 0);
+        assertEq(address(user).balance, 0);
+    }
+
+
+    // @poc-m3 NO
+    function test_StakeWithTinyBuffer() public {
+        uint256 bufferSize = 1;
+        // uint256 bufferSize = 0.1 ether;
+        uint256 stakeAmount = 0.1 ether;
+        uint256 stakeCount = 10;
+
+        // Set up delegation first
+        vm.startPrank(manager);
+        validatorManager.activateValidator(validator);
+        validatorManager.setDelegation(address(stakingManager), validator);
+        // 设置 buffer 为 1
+        stakingManager.setTargetBuffer(bufferSize);
+        vm.stopPrank();
+
+        vm.deal(user, stakeAmount * stakeCount);
+
+        assertEq(address(stakingManager).balance, 0);
+        vm.startPrank(user);
+
+        // for (uint256 i; i < stakeCount; i++) {
+        //     stakingManager.stake{value: stakeAmount}();
+
+        //     kHYPE.approve(address(stakingManager), stakeAmount);
+        //     stakingManager.queueWithdrawal(stakeAmount);
+        // }
+
+        stakingManager.stake{value: stakeAmount}();
+        assertEq(kHYPE.balanceOf(user), 1e17);
+        assertEq(stakingAccountant.kHYPEToHYPE(kHYPE.balanceOf(user)), 1e17);
+
+        kHYPE.approve(address(stakingManager), stakeAmount);
+        stakingManager.queueWithdrawal(stakeAmount);
+
+        assertEq(kHYPE.balanceOf(user), 0);
+        assertEq(stakingAccountant.kHYPEToHYPE(kHYPE.balanceOf(user)), 0);
+
+        vm.stopPrank();
+
+
+        // assertEq(stakingManager.totalStaked(), 1 * stakeAmount);
+        // assertEq(address(stakingManager).balance, 1 * 1e10);
+
+        // // assertEq(address(stakingManager).balance, stakeAmount);
+        // assertEq(address(user).balance, stakeAmount);
+
+
+    }
+
+
     function test_QueueWithdrawal_Success() public {
         uint256 amount = 1 ether;
 
@@ -195,6 +270,57 @@ contract StakingManagerTest is BaseTest {
         assertEq(stakingManager.totalQueuedWithdrawals(), 0);
         assertEq(stakingManager.totalClaimed(), expectedClaimedAmount, "Total claimed should account for fee");
     }
+
+    // @poc-m2
+    function test_ConfirmWithdrawal_Fail() public {
+        uint256 stakeAmount  = 1 ether;
+        address userA = makeAddr("userA");
+        address userB = makeAddr("userB");
+
+        address[] memory users = new address[](2);
+        users[0] = userA;
+        users[1] = userB;
+
+        // Setup validatorManager and stakingManager
+        vm.startPrank(manager);
+        validatorManager.activateValidator(validator);
+        validatorManager.setDelegation(address(stakingManager), validator);
+        stakingManager.setWithdrawalDelay(0);
+        vm.stopPrank();
+
+        uint256 withdrawalId = 0;
+        // Step 1: UserA and UserB stake and queue withdrawal
+        for (uint8 i = 0; i < users.length; i++) {
+            address _user = users[i];
+            vm.deal(_user, stakeAmount);
+
+            vm.startPrank(_user);
+            // Stake
+            stakingManager.stake{value: stakeAmount}();
+
+            // Withdrawal
+            kHYPE.approve(address(stakingManager), stakeAmount);
+            stakingManager.queueWithdrawal(stakeAmount);
+            vm.stopPrank();
+            // Check that hypeAmount recorded is 0.999e18
+            StakingManager.WithdrawalRequest memory request = stakingManager.withdrawalRequests(_user, withdrawalId);
+            assertEq(request.hypeAmount, 0.999e18);
+        }
+
+        // Step 2: Simulate L1 slashing happens before confirmation
+        // After slashing, StakingManager only has 1.5e18 HYPE left
+        vm.deal(address(stakingManager), 1.5e18);
+
+        // Step3. UserA confirms withdrawal of 0.999e18 -> succeeds
+        vm.prank(userA);
+        stakingManager.confirmWithdrawal(withdrawalId);
+
+        // Step4. UserB confirms withdrawal of 0.999e18 -> reverts
+        vm.prank(userB);
+        vm.expectRevert("Insufficient contract balance");
+        stakingManager.confirmWithdrawal(withdrawalId);
+    }
+
 
     function test_SetStakingLimit() public {
         uint256 newLimit = 1000 ether;

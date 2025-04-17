@@ -183,6 +183,7 @@ contract StakingAccountant is IStakingAccountant, Initializable, AccessControlEn
     }
 
     function HYPEToKHYPE(uint256 HYPEAmount) public view override returns (uint256) {
+        // @q-a 兑换比例应该如何？什么条件下比例会异常？这样就可以多铸造KHYPE - validator report行为会造成影响
         uint256 exchangeRatio = _getExchangeRatio();
         require(exchangeRatio > 0, "Invalid exchange ratio");
         return Math.mulDiv(HYPEAmount, 1e18, exchangeRatio);
@@ -194,12 +195,15 @@ contract StakingAccountant is IStakingAccountant, Initializable, AccessControlEn
      * @notice Calculate the exchange ratio between HYPE and all kHYPE tokens
      * @return ratio Exchange ratio with 18 decimals precision (HYPE/kHYPE)
      */
+     //  HYPE 与 kHYPE 的兑换比例
+     // 类似流动性质押中 Lido 的 stETH 与 ETH 的兑换比例
     function _getExchangeRatio() internal view returns (uint256) {
         // Calculate total kHYPE supply across all unique tokens
         uint256 totalKHYPESupply = 0;
         uint256 uniqueTokenCount = _uniqueTokens.length();
 
         // Sum up the supply of each unique token
+        // 所有 kHYPE 的总 supply
         for (uint256 i = 0; i < uniqueTokenCount; i++) {
             address tokenAddress = _uniqueTokens.at(i);
             totalKHYPESupply += IERC20(tokenAddress).totalSupply();
@@ -211,11 +215,16 @@ contract StakingAccountant is IStakingAccountant, Initializable, AccessControlEn
         }
 
         // Calculate total HYPE (in 8 decimals)
-        uint256 rewardsAmount = validatorManager.totalRewards();
+        // 所有 validator 收益
+        uint256 rewardsAmount = validatorManager.totalRewards(); // @q-a 这里依赖于更新，更新不及时，则兑换率出问题 -架构问题，不属于漏洞
+        // 被惩罚掉的金额
         uint256 slashingAmount = validatorManager.totalSlashing();
+        // 净资产量
+        // @audit-l5-ok 单个validator奖惩会影响到全局
         uint256 totalHYPE = totalStaked + rewardsAmount - totalClaimed - slashingAmount;
 
         // Calculate ratio with 18 decimals precision
+        // 总HYPE / 总KHYPE
         return Math.mulDiv(totalHYPE, 1e18, totalKHYPESupply);
     }
 }

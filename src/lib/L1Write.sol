@@ -17,11 +17,14 @@ contract L1Write {
     function sendVaultTransfer(address vault, bool isDeposit, uint64 usd) external {
         emit VaultTransfer(msg.sender, vault, isDeposit, usd);
     }
-
+    // 质押/解质押 （isUndelegate）
+    // 将当前合约的 staking balance 中的资金，正式分配给某个 validator
     function sendTokenDelegate(address validator, uint64 _wei, bool isUndelegate) external {
         emit TokenDelegate(msg.sender, validator, _wei, isUndelegate);
     }
 
+    // 质押准备
+    // 将当前合约在 Core 的 Spot Balance（可用余额） 转入
     function sendCDeposit(uint64 _wei) external {
         emit CDeposit(msg.sender, _wei);
     }

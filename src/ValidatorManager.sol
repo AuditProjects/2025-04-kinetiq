@@ -57,6 +57,7 @@ contract ValidatorManager is
     uint256 public totalRewards; // In 8 decimals
 
     /// @notice Mapping of staking manager to delegation target
+    // stakingManager -> validator (每个stakingManager只能对应一个validator)
     mapping(address => address) public delegations;
 
     /// @notice Mapping of validator to rebalance request
@@ -139,7 +140,7 @@ contract ValidatorManager is
             integrityScore: 0,
             selfStakeScore: 0,
             lastUpdateTime: block.timestamp,
-            active: true
+            active: true // active
         });
 
         _validators.push(newValidator);
@@ -152,6 +153,7 @@ contract ValidatorManager is
      * @notice Deactivate a validator
      * @param validator Address of the validator to deactivate
      */
+     // 将一个validator设置为不活跃
     function deactivateValidator(address validator) external whenNotPaused nonReentrant validatorExists(validator) {
         // limit the msg.sender to MANAGER_ROLE
         require(hasRole(MANAGER_ROLE, msg.sender), "Not authorized");
@@ -196,6 +198,9 @@ contract ValidatorManager is
      * @param validators Array of validator addresses
      * @param withdrawalAmounts Array of amounts to withdraw
      */
+     // 从多个 validator 中提取资金以应对用户提现
+     // @q-a 如果rebalanceWithdrawal后，想要取消怎么办？ - 无法取消，只能通过closeRebalanceRequests执行完
+    // @audit-m1-ok rebalanceWithdrawal和closeRebalanceRequests都将操作入队，且没有进行状态检查就执行(资金尚未到账), 造成对应validator pending，永远无法执行
     function rebalanceWithdrawal(
         address stakingManager,
         address[] calldata validators,
@@ -208,6 +213,7 @@ contract ValidatorManager is
             require(validators[i] != address(0), "Invalid validator address");
 
             // Add rebalance request (this will check for duplicates)
+            // validatorRebalanceRequests入队，且跟踪检查, 确保该 validator 在任何时刻只能有一个 rebalance 请求存在
             _addRebalanceRequest(stakingManager, validators[i], withdrawalAmounts[i]);
 
             unchecked {
@@ -216,6 +222,7 @@ contract ValidatorManager is
         }
 
         // Trigger withdrawals through StakingManager
+        // 提交到stakingManager入队: 从各个validator中提款
         IStakingManager(stakingManager).processValidatorWithdrawals(validators, withdrawalAmounts);
     }
 
@@ -224,13 +231,15 @@ contract ValidatorManager is
      * @param validator Address of the validator
      * @param withdrawalAmount Amount to withdraw
      */
+     // @reported: validator的余额可能在任意时间变化, 当执行closeRebalanceRequests时余额有问题
     function _addRebalanceRequest(address staking, address validator, uint256 withdrawalAmount) internal {
+        // 确保validator只能处理一笔
         require(!_validatorsWithPendingRebalance.contains(validator), "Validator has pending rebalance");
         require(withdrawalAmount > 0, "Invalid withdrawal amount");
 
         (bool exists /* uint256 index */, ) = _validatorIndexes.tryGet(validator);
         require(exists, "Validator does not exist");
-
+        // 会在下面 closeRebalanceRequests 中执行
         validatorRebalanceRequests[validator] = RebalanceRequest({
             staking: staking,
             validator: validator,
@@ -247,13 +256,17 @@ contract ValidatorManager is
      * @param validators Array of validator addresses
      * @dev Clears the rebalance requests and triggers redelegation through stakingManager
      */
+     // 关闭 rebalance 请求 并且重新质押入validator
+     // 需要确认L1提现已经完成的情况下才能执行
+     // @q 如果在L1未做确认就调用, 会造成状态变更吗
+     // @reported 当 validator 被 deactivate 时,  HYPE 余额被卡在 validator 中
     function closeRebalanceRequests(
         address stakingManager,
         address[] calldata validators
     ) external whenNotPaused nonReentrant onlyRole(MANAGER_ROLE) {
         require(_validatorsWithPendingRebalance.length() > 0, "No pending requests");
         require(validators.length > 0, "Empty array");
-
+        // 已经收回的质押资金总额
         uint256 totalAmount = 0;
 
         for (uint256 i = 0; i < validators.length; ) {
@@ -278,7 +291,9 @@ contract ValidatorManager is
         }
 
         // Trigger redelegation through StakingManager if there's an amount to delegate
+        //
         if (totalAmount > 0) {
+            // 重新向validator分配 stake
             IStakingManager(stakingManager).processValidatorRedelegation(totalAmount);
         }
     }
@@ -406,6 +421,7 @@ contract ValidatorManager is
     /// @notice Report a reward event for a validator
     /// @param validator Address of the validator to be rewarded
     /// @param amount Amount of rewards for the validator
+    // @audit-l6-ok MEV, 当validator获得Reward时，兑换率变化，此时抢先或后置交易？
     function reportRewardEvent(
         address validator,
         uint256 amount

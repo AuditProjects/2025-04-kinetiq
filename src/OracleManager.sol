@@ -138,7 +138,9 @@ contract OracleManager is IOracleManager, Initializable, AccessControlEnumerable
     }
 
     /* ========== PERFORMANCE GENERATION ========== */
-
+    // 负责定时聚合链下 oracle 提供的 validator 状态数据，并推动奖励、惩罚和绩效更新
+    // 假设被每小时调用一次
+    // @reported
     function generatePerformance(address validator) external whenNotPaused onlyRole(OPERATOR_ROLE) returns (bool) {
         // Check minimum interval between updates for this specific validator
         require(
@@ -172,7 +174,7 @@ contract OracleManager is IOracleManager, Initializable, AccessControlEnumerable
                 } // Increment before continue
                 continue; // Skip inactive oracles
             }
-
+            // 从 Oracle获取报告数据
             try IOracleAdapter(oracle).getPerformance(validator) returns (
                 uint256 balance,
                 uint256 uptimeScore,
@@ -223,6 +225,7 @@ contract OracleManager is IOracleManager, Initializable, AccessControlEnumerable
         require(validOracleCount >= MIN_VALID_ORACLES, "Insufficient valid oracles");
 
         // Calculate averages
+        // 每个数据求其平均值
         uint256 avgBalance = totalBalance / validOracleCount;
         uint256 avgUptimeScore = totalUptimeScore / validOracleCount;
         uint256 avgSpeedScore = totalSpeedScore / validOracleCount;
